@@ -72,7 +72,7 @@ class TurtlebotNavigation:
             self.connection.commit()
 
     def check_stop(self):
-        self.cursor.execute("SELECT stop FROM one ORDER BY id DESC LIMIT 1")
+        self.cursor.execute("SELECT stop FROM three ORDER BY id DESC LIMIT 1")
         result = self.cursor.fetchone()
         return result[0] if result else 0
 
