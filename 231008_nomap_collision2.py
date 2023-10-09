@@ -20,33 +20,50 @@ class TurtlebotNavigation:
         self.stop_flag = False
         self.stop_lock = threading.Lock()
 
-        try:
-            # Establish database connection
-            self.connection = pymysql.connect(host='192.168.1.155',
-                                              user='turtlebot',
-                                              password='0000',
-                                              database='test')
-            self.cursor = self.connection.cursor()
-
-            # Create table if not exists
-            self.cursor.execute('''
-                CREATE TABLE IF NOT EXISTS one (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    x FLOAT,
-                    y FLOAT,
-                    theta FLOAT,
-                    stop INT DEFAULT 0
-                )
-            ''')
-            self.connection.commit()
-
-            print("Database connection successful.")
-        except Exception as e:
-            print(f"Error: {e}")
-
         self.stop_thread = threading.Thread(target=self.monitor_stop)
         self.stop_thread.daemon = True
         self.stop_thread.start()
+
+    def insert_coordinates(self, x, y, theta):
+        try:
+            # Connect to the database
+            conn = pymysql.connect(host='192.168.1.155', user='turtlebot', password='0000', database='test')
+            cursor = conn.cursor()
+
+            query = "UPDATE one SET x = %s, y = %s, theta = %s WHERE idone = 1"
+            cursor.execute(query, (x, y, theta))
+            conn.commit()
+
+            # Close the database connection
+            cursor.close()
+            conn.close()
+
+        except pymysql.Error as e:
+            print(f"Error in update_position: {e}")
+
+    def check_stop(self):
+        try:
+            # Connect to the database
+            conn = pymysql.connect(host='192.168.1.155', user='turtlebot', password='0000', database='test')
+            cursor = conn.cursor()
+
+            # Retrieve the collision value from the dwa table
+            query = "SELECT stop FROM three"
+            cursor.execute(query)
+            result = cursor.fetchone()
+
+            # Close the database connection
+            cursor.close()
+            conn.close()
+
+            if result is None:
+                return 0
+            else:
+                return result[0]
+
+        except pymysql.Error as e:
+            print(f"Error in check_collision: {e}")
+            return 0
 
     def goal_callback(self, msg):
         self.goal_publisher.publish(msg)
@@ -63,18 +80,8 @@ class TurtlebotNavigation:
             orientation_q = msg.pose.pose.orientation
             orientation_list = [orientation_q.x, orientation_q.y, orientation_q.z, orientation_q.w]
             (roll, pitch, yaw) = euler_from_quaternion(orientation_list)
-            rospy.loginfo(f"Position (x, y, theta): ({position_x:.2f}, {position_y:.2f}, {yaw:.2f})")
-
-            # Insert the coordinates into the database
-            self.cursor.execute('''
-                INSERT INTO one (x, y, theta) VALUES (%s, %s, %s)
-            ''', (position_x, position_y, yaw))
-            self.connection.commit()
-
-    def check_stop(self):
-        self.cursor.execute("SELECT stop FROM three ORDER BY id DESC LIMIT 1")
-        result = self.cursor.fetchone()
-        return result[0] if result else 0
+            # rospy.loginfo(f"Position (x, y, theta): ({position_x:.2f}, {position_y:.2f}, {yaw:.2f})")
+            self.insert_coordinates(position_x, position_y, yaw)
 
     def monitor_stop(self):
         while not rospy.is_shutdown():
@@ -96,11 +103,11 @@ class TurtlebotNavigation:
                 x = input("목표 좌표를 입력하세요 (띄어쓰기로 구분, 'done'으로 종료): ")
                 if x.lower() == 'done':
                     break
-                x, y = map(float, x.split())
+                x, y = map(float, x.split( ))
 
                 # 목표 좌표를 설정합니다.
                 goal_msg = PoseStamped()
-                goal_msg.header.frame_id = "map"
+                # goal_msg.header.frame_id = "map"
                 goal_msg.pose.position.x = x
                 goal_msg.pose.position.y = y
                 goal_msg.pose.orientation.w = 1.0  # 오리엔테이션을 초기화합니다.
@@ -123,8 +130,6 @@ class TurtlebotNavigation:
 
         except KeyboardInterrupt:
             pass
-        finally:
-            self.connection.close()
 
 if __name__ == '__main__':
     try:
