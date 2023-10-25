@@ -1,5 +1,11 @@
 #!/usr/bin/env python
 
+# rostopic pub /initialpose geometry_msgs/PoseWithCovarianceStamped '{header: {stamp: now, frame_id: "map"}, pose: {pose: {position: {x: -2.0, y: 0.0, z: 0.0}, orientation: {w: 1.0}}}}'
+#
+# rostopic pub /move_base_simple/goal geometry_msgs/PoseStamped '{header: {stamp: now, frame_id: "map"}, pose: {position: {x: 1.0, y: 0.5, z: 0.0}, orientation: {w: 1.0}}}'
+#
+# rostopic pub /move_base_simple/goal geometry_msgs/PoseStamped '{header: {stamp: now, frame_id: "map"}, pose: {position: {x: -2.0, y: 0.0, z: 0.0}, orientation: {w: 1.0}}}'
+
 import rospy
 from geometry_msgs.msg import PoseWithCovarianceStamped, PoseStamped
 
