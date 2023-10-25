@@ -3,10 +3,10 @@
 import rospy
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import LaserScan
 import math
 import random
 from tf.transformations import euler_from_quaternion
+import pymysql
 
 class TurtleBot:
     def __init__(self):
@@ -15,7 +15,6 @@ class TurtleBot:
 
         self.cmd_vel = rospy.Publisher('cmd_vel', Twist, queue_size=10)
         self.odom_sub = rospy.Subscriber('odom', Odometry, self.odom_callback)
-        self.scan_sub = rospy.Subscriber('scan', LaserScan, self.scan_callback)
 
         self.rate = rospy.Rate(10)  # 10 Hz
         self.target_coordinates = []  # List to store target coordinates
@@ -32,6 +31,39 @@ class TurtleBot:
 
         self.current_pose = None  # Store current pose
 
+        # Connect to the database
+        self.conn = pymysql.connect(host='192.168.1.155', user='turtlebot', password='0000', database='test')
+        self.cursor = self.conn.cursor()
+
+    def insert_coordinates(self, x, y, theta):
+        try:
+            # Connect to the database
+            conn = pymysql.connect(host='192.168.1.155', user='turtlebot', password='0000', database='test')
+            cursor = conn.cursor()
+
+            query = "UPDATE one SET x = %s, y = %s, theta = %s WHERE idone = 1"
+            self.cursor.execute(query, (x, y, theta))
+            self.conn.commit()
+
+        except pymysql.Error as e:
+            print(f"Error in update_position: {e}")
+
+    def check_stop(self):
+        try:
+            # Retrieve the collision value from the three table
+            query = "SELECT stop FROM three order by idthree desc limit 1"
+            self.cursor.execute(query)
+            result = self.cursor.fetchone()
+
+            if result is None:
+                return 0
+            else:
+                return result[0]
+
+        except pymysql.Error as e:
+            print(f"Error in check_collision: {e}")
+            return 0
+
     def odom_callback(self, data):
         self.current_pose = data.pose.pose  # Update current pose
 
@@ -42,6 +74,15 @@ class TurtleBot:
         # Calculate the Euclidean distance between the current position and the current target position
         current_x = self.current_pose.position.x
         current_y = self.current_pose.position.y
+
+        # Find current yaw
+        # current_orientation = (
+        #     self.current_pose.orientation.x,
+        #     self.current_pose.orientation.y,
+        #     self.current_pose.orientation.z,
+        #     self.current_pose.orientation.w
+        # )
+        # _, _, current_yaw = euler_from_quaternion(current_orientation)
 
         distance_to_target = math.sqrt((self.target_coordinates[self.current_target_index][0] - current_x) ** 2 +
                                        (self.target_coordinates[self.current_target_index][1] - current_y) ** 2)
@@ -56,14 +97,8 @@ class TurtleBot:
                 rospy.loginfo("All target positions reached!")
                 rospy.signal_shutdown("All target positions reached!")  # Shutdown the node
 
-    def scan_callback(self, data):
-        num_ranges = 360
-        range_min = 0.1
-        range_max = 10.0
-
-        self.scan_ranges = [random.uniform(range_min, range_max) for _ in range(num_ranges)]
-        self.scan_angle_min = -math.pi
-        self.scan_angle_increment = (2 * math.pi) / num_ranges
+                # Insert current coordinates into the database
+                # self.insert_coordinates(current_x, current_y, current_yaw)
 
     def move_to_target(self, target_coordinates):
         self.target_coordinates = target_coordinates
@@ -94,18 +129,17 @@ class TurtleBot:
                 _, _, current_yaw = euler_from_quaternion(current_orientation)
                 angle_difference = target_angle - current_yaw
 
+                # Insert current coordinates into the database
+                self.insert_coordinates(current_x, current_y, current_yaw)
+
                 # Normalize the angle difference to the range [-pi, pi]
                 angle_difference = math.atan2(math.sin(angle_difference), math.cos(angle_difference))
 
                 # Calculate the linear velocity based on the distance to the target
                 linear_velocity = self.max_linear_velocity * distance_to_target
 
-                # If the target is behind the TurtleBot, set reverse motion
-                if abs(angle_difference) > math.pi / 2:
-                    linear_velocity = -linear_velocity
-
                 # Limit the linear velocity within the maximum limits
-                linear_velocity = max(-self.max_linear_velocity, min(self.max_linear_velocity, linear_velocity))
+                linear_velocity = max(0.0, min(self.max_linear_velocity, linear_velocity))
 
                 # Calculate the angular velocity to align with the target angle
                 angular_velocity = self.max_angular_velocity * angle_difference
@@ -127,6 +161,15 @@ class TurtleBot:
                     twist_cmd.linear.x = 0.0
                     self.cmd_vel.publish(twist_cmd)
                     break
+
+                # Check for stop signal from the database
+                if self.check_stop() == 1:
+                    twist_cmd = Twist()
+                    twist_cmd.angular.z = 0.0
+                    twist_cmd.linear.x = 0.0
+                    self.cmd_vel.publish(twist_cmd)
+                    rospy.loginfo("Stopped by external signal.")
+                    return
 
                 self.rate.sleep()
 
@@ -251,6 +294,7 @@ class TurtleBot:
         rospy.loginfo("Stopping the TurtleBot...")
         self.cmd_vel.publish(Twist())  # Stop the TurtleBot
         rospy.sleep(1)
+        self.conn.close()  # Close the database connection
 
 if __name__ == '__main__':
     try:
