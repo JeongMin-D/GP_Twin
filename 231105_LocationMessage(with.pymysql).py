@@ -20,7 +20,7 @@ class PoseSender:
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
         theta = msg.pose.pose.orientation.z  # Assuming theta is in the orientation z field
-        self.cursor.execute("UPDATE odometry_table SET x=%s, y=%s, theta=%s", (x, y, theta))
+        self.cursor.execute("UPDATE one SET x=%s, y=%s, theta=%s where idone = 1", (x, y, theta))
         self.db.commit()
 
         # Optionally, you can print a debug message to confirm the update
