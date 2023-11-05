@@ -26,6 +26,10 @@ class PoseSender:
         # Optionally, you can print a debug message to confirm the update
         rospy.loginfo(f"Updated odometry data: x={x}, y={y}, theta={theta}")
 
+    def update_odometry_to_database(self, x, y, theta):
+        self.cursor.execute("UPDATE one SET x=%s, y=%s, theta=%s where idone = 1", (x, y, theta))
+        self.db.commit()
+
     def get_pose(self, pose_type):
         x = float(input(f"Enter {pose_type} x coordinate: "))
         y = float(input(f"Enter {pose_type} y coordinate: "))
