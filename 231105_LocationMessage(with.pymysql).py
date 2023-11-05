@@ -20,16 +20,16 @@ class PoseSender:
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
         theta = msg.pose.pose.orientation.z  # Assuming theta is in the orientation z field
-        self.update_odometry_data(x, y, theta)
+        self.cursor.execute("UPDATE odometry_table SET x=%s, y=%s, theta=%s", (x, y, theta))
+        self.db.commit()
+
+        # Optionally, you can print a debug message to confirm the update
+        rospy.loginfo(f"Updated odometry data: x={x}, y={y}, theta={theta}")
 
     def get_pose(self, pose_type):
         x = float(input(f"Enter {pose_type} x coordinate: "))
         y = float(input(f"Enter {pose_type} y coordinate: "))
         return x, y
-
-    def update_odometry_data(self, x, y, theta):
-        self.cursor.execute("UPDATE one SET x=%s, y=%s, theta=%s where idone = 1", (x, y, theta))
-        self.db.commit()
 
     def publish_initial_pose(self, x, y):
         pub = rospy.Publisher('/initialpose', PoseWithCovarianceStamped, queue_size=10)
