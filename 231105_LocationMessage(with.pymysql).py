@@ -9,22 +9,18 @@ class PoseSender:
 
     def __init__(self):
         rospy.init_node('pose_sender', anonymous=True)
-        rospy.Subscriber('/odometry_topic', Odometry, self.odometry_callback)
+        self.odom_sub = rospy.Subscriber('/odom', Odometry, self.odom_callback)
         self.db = pymysql.connect(host='192.168.1.155',
                                   user='turtlebot',
                                   password='0000',
                                   database='test')
         self.cursor = self.db.cursor()
 
-    def odometry_callback(self, msg):
-        x = msg.pose.pose.position.x
-        y = msg.pose.pose.position.y
-        theta = msg.pose.pose.orientation.z  # Assuming theta is in the orientation z field
-        self.cursor.execute("UPDATE one SET x=%s, y=%s, theta=%s where idone = 1", (x, y, theta))
-        self.db.commit()
-
-        # Optionally, you can print a debug message to confirm the update
-        rospy.loginfo(f"Updated odometry data: x={x}, y={y}, theta={theta}")
+    def odom_callback(self, odom_msg):  # 추가된 부분
+        x = odom_msg.pose.pose.position.x
+        y = odom_msg.pose.pose.position.y
+        theta = odom_msg.pose.pose.orientation.z  # 예시로 z축 값을 사용. 필요에 따라 수정할 것
+        self.update_odometry_to_database(x, y, theta)
 
     def update_odometry_to_database(self, x, y, theta):
         self.cursor.execute("UPDATE one SET x=%s, y=%s, theta=%s where idone = 1", (x, y, theta))
