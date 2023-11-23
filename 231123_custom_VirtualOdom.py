@@ -3,15 +3,18 @@
 import rospy
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
-from tf.transformations import euler_from_quaternion
 import math
+from tf.transformations import euler_from_quaternion
 import pymysql
-import time
 
 class TurtlebotController:
     def __init__(self):
-        self.turtlebot_pub = rospy.Publisher('cmd_vel', Twist, queue_size=10)
+        rospy.init_node('robot_control_node', anonymous=False)
+
+        self.turtlebot_cmd_vel = rospy.Publisher('cmd_vel', Twist, queue_size=10)
         self.odom_sub = rospy.Subscriber('odom', Odometry, self.odom_callback)
+
+        self.rate = rospy.Rate(10)  # 10 Hz
 
         self.virtual_odom_x = 0.0
         self.virtual_odom_y = 0.0
@@ -19,7 +22,8 @@ class TurtlebotController:
 
         self.virtual_odom_increment = 0.01  # Increment value for virtual_odom_x
 
-        self.max_speed = 0.1
+        self.max_linear_velocity = 0.1
+        self.max_angular_velocity = 1.0
 
         self.current_pose = None  # Initialize current_pose attribute
 
@@ -40,12 +44,7 @@ class TurtlebotController:
             if self.virtual_odom_x > 1:  # Make sure it doesn't exceed 1
                 self.virtual_odom_x = 1
 
-        # 임의의 시간 지연 (0.1초)
-        time.sleep(0.1)
-
     def move_turtlebot(self):
-        rate = rospy.Rate(10)  # Publish 주기 설정 (10Hz)
-
         while not rospy.is_shutdown():
             current_x = self.current_pose.position.x
             current_y = self.current_pose.position.y
@@ -59,31 +58,34 @@ class TurtlebotController:
 
             self.get_virtual_odom_from_db()
 
-            dx = self.virtual_odom_x - current_x
-            dy = self.virtual_odom_y - current_y
-            dtheta = self.virtual_odom_theta - current_yaw
+            distance_to_target = math.sqrt((self.virtual_odom_x - current_x) ** 2 + (self.virtual_odom_y - current_y) ** 2)
 
-            rospy.loginfo("distance: ({}, {}, {})".format(dx, dy, dtheta))
+            target_angle = math.atan2(self.virtual_odom_y - current_y, self.virtual_odom_x - current_x)
+
+            angle_difference = target_angle - current_yaw
+            angle_difference = math.atan2(math.sin(angle_difference), math.cos(angle_difference))
+
+            linear_velocity = self.max_linear_velocity * distance_to_target
+
+            if abs(angle_difference) > math.pi / 2:
+                linear_velocity = -self.max_linear_velocity
+                angular_velocity = 0.0
+            else:
+                angular_velocity = self.max_angular_velocity * angle_difference
 
             cmd_vel = Twist()
-            cmd_vel.linear.x = min(dx, self.max_speed)
-            cmd_vel.linear.y = min(dy, self.max_speed)
-            cmd_vel.angular.z = min(dtheta, self.max_speed)
+            cmd_vel.linear.x = max(-self.max_linear_velocity, min(self.max_linear_velocity, linear_velocity))
+            cmd_vel.angular.z = max(-self.max_angular_velocity, min(self.max_angular_velocity, angular_velocity))
 
-            self.turtlebot_pub.publish(cmd_vel)
-            rate.sleep()
+            self.turtlebot_cmd_vel.publish(cmd_vel)
 
     # def __del__(self):
     #     # 데이터베이스 연결 닫기
     #     self.db.close()
 
-def main():
-    rospy.init_node('robot_control_node', anonymous=True)
-    controller = TurtlebotController()
-    controller.move_turtlebot()
-
 if __name__ == '__main__':
     try:
-        main()
+        controller = TurtlebotController()
+        controller.move_turtlebot()
     except rospy.ROSInterruptException:
         pass
