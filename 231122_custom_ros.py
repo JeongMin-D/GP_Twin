@@ -32,15 +32,9 @@ class TurtleBot:
             'database': 'custom'
         }
 
-        # 장애물 정보를 저장할 변수 초기화
-        self.obstacle_coordinates = []
-        self.obstacle_sizes = []
-
-        self.robot_width = 0.3  # 터틀봇의 가로 폭
-        self.robot_length = 0.4  # 터틀봇의 세로 길이
-
     def odom_callback(self, data):
         self.current_pose = data.pose.pose  # Update current pose
+
     def update_odometry(self, x, y, theta):
         # Connect to the database, execute the update, and close the connection
         with pymysql.connect(**self.db_params) as conn:
@@ -48,50 +42,6 @@ class TurtleBot:
                 sql = "UPDATE amr SET x = %s, y = %s, theta = %s WHERE idamr = 1"
                 cursor.execute(sql, (x, y, theta))
                 conn.commit()
-
-    def select_obstacle_info(self):
-        # Connect to the database, execute the select query, and close the connection
-        with pymysql.connect(**self.db_params) as conn:
-            with conn.cursor() as cursor:
-                sql = "SELECT x_cm, y_cm, w, h FROM ue"
-                cursor.execute(sql)
-                result = cursor.fetchall()
-
-                # Update obstacle information
-                self.obstacle_coordinates = [(row[0], row[1]) for row in result]
-                self.obstacle_sizes = [(row[2], row[3]) for row in result]
-    def obstacle_avoidance(self):
-        """
-        Avoid obstacles based on their absolute coordinates and dimensions.
-        """
-        current_x = self.current_pose.position.x
-        current_y = self.current_pose.position.y
-
-        # Update obstacle information from the database
-        self.select_obstacle_info()
-
-        for i in range(len(self.obstacle_coordinates)):
-            obstacle_x, obstacle_y = self.obstacle_coordinates[i]
-            obstacle_size_x, obstacle_size_y = self.obstacle_sizes[i]
-
-            # 터틀봇의 크기를 고려하여 장애물과의 거리 계산
-            obstacle_safe_distance_x = obstacle_size_x / 2 + self.robot_width / 2
-            obstacle_safe_distance_y = obstacle_size_y / 2 + self.robot_length / 2
-
-            # Check if the TurtleBot is close to the obstacle
-            if (
-                current_x > obstacle_x - obstacle_size_x / 2
-                and current_x < obstacle_x + obstacle_size_x / 2
-                and current_y > obstacle_y - obstacle_size_y / 2
-                and current_y < obstacle_y + obstacle_size_y / 2
-            ):
-                # If close to the obstacle, stop and rotate to avoid it
-                twist_cmd = Twist()
-                twist_cmd.angular.z = self.max_angular_velocity
-                twist_cmd.linear.x = 0.0
-                self.cmd_vel.publish(twist_cmd)
-                rospy.loginfo("Obstacle detected, rotating to avoid.")
-                self.rate.sleep()
 
     def move_to_target(self, target_coordinates):
         self.target_coordinates = target_coordinates
@@ -101,7 +51,6 @@ class TurtleBot:
             rospy.loginfo("Moving to target: ({}, {})".format(target_x, target_y))
 
             while not rospy.is_shutdown():
-                self.obstacle_avoidance()
                 # Get the current target coordinates
                 target_x, target_y = self.target_coordinates[i]
 

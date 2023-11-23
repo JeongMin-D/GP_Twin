@@ -1,127 +1,104 @@
 #!/usr/bin/env python
 
 import rospy
-from geometry_msgs.msg import Twist, PoseStamped
-from nav_msgs.msg import Odometry, OccupancyGrid
 from heapq import heappush, heappop
-import math
+from nav_msgs.msg import OccupancyGrid, Odometry  # Odometry 메시지 추가
+from geometry_msgs.msg import PoseStamped
 
 class AStarPlanner:
     def __init__(self):
-        self.odom_sub = rospy.Subscriber('/odom', Odometry, self.odom_callback)
-        self.map_sub = rospy.Subscriber('/map', OccupancyGrid, self.map_callback)
-        self.vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+        self.resolution = 0.001  # 맵 해상도 (meter per pixel)
+        self.map_width = 1.5  # 맵 가로 길이
+        self.map_height = 1.5  # 맵 세로 길이
+        self.start = (0, 0)  # 시작 위치 (x, y)
+        self.goal = (1, 0)   # 목표 위치 (x, y)
+        self.obstacles = [((0.5, 0), (1, 1))]  # 장애물의 절대 좌표와 크기
 
-        self.odom = None
-        self.map_info = None
-        self.map_data = None
+        # ROS 노드 초기화
+        rospy.init_node('a_star_planner')
+        self.goal_pub = rospy.Publisher('/move_base_simple/goal', PoseStamped, queue_size=10)
+        self.odom_pub = rospy.Publisher('/odom', Odometry, queue_size=10)  # Odometry 퍼블리셔
 
-        self.resolution = None
-        self.width = None
-        self.height = None
-        self.origin = None
-
-        self.twist = Twist()
-
-    def odom_callback(self, msg):
-        self.odom = msg
-
-    def map_callback(self, msg):
-        self.map_info = msg.info
-        self.width = msg.info.width
-        self.height = msg.info.height
-        self.resolution = msg.info.resolution
-        self.origin = msg.info.origin
-        self.map_data = msg.data
-
-    def heuristic(self, a, b):
-        return math.sqrt((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2)
-
-    def get_neighbors(self, current):
-        neighbors = []
-        for i in range(-1, 2):
-            for j in range(-1, 2):
-                if i == 0 and j == 0:
-                    continue
-                neighbor = (current[0] + i, current[1] + j)
-                if 0 <= neighbor[0] < self.width and 0 <= neighbor[1] < self.height:
-                    if self.map_data[neighbor[1] * self.width + neighbor[0]] == 0:  # Assuming 0 is free space
-                        neighbors.append(neighbor)
-        return neighbors
-
-    def move_to_goal(self, goal):
-        if self.map_info is None or self.odom is None or self.map_data is None:
-            return
-
-        start = (int((self.odom.pose.pose.position.x - self.origin.position.x) / self.resolution),
-                 int((self.odom.pose.pose.position.y - self.origin.position.y) / self.resolution))
-        goal = (int((goal.x - self.origin.position.x) / self.resolution),
-                int((goal.y - self.origin.position.y) / self.resolution))
-
-        open_set = []
-        heappush(open_set, (0, start))
-        came_from = {}
-        cost_so_far = {start: 0}
-
-        while open_set:
-            current_cost, current_node = heappop(open_set)
-
-            if current_node == goal:
-                break
-
-            for next_node in self.get_neighbors(current_node):
-                new_cost = cost_so_far[current_node] + self.heuristic(current_node, next_node)
-                if next_node not in cost_so_far or new_cost < cost_so_far[next_node]:
-                    cost_so_far[next_node] = new_cost
-                    priority = new_cost + self.heuristic(next_node, goal)
-                    heappush(open_set, (priority, next_node))
-                    came_from[next_node] = current_node
-
-        path = []
-        current = goal
-        while current != start:
-            path.append(current)
-            current = came_from[current]
-        path.append(start)
-        path.reverse()
-
-        # Move along the planned path with odometry-based control
-        for point in path:
-            current_odom_x = self.odom.pose.pose.position.x
-            current_odom_y = self.odom.pose.pose.position.y
-
-            # Calculate linear and angular velocities based on odometry and goal point
-            dist_to_goal = math.sqrt((point[0] * self.resolution - current_odom_x) ** 2 +
-                                     (point[1] * self.resolution - current_odom_y) ** 2)
-            angle_to_goal = math.atan2(point[1] * self.resolution - current_odom_y,
-                                       point[0] * self.resolution - current_odom_x)
-
-            # Adjust linear and angular velocities based on distance and angle to the goal
-            linear_speed = min(0.2, dist_to_goal)  # Adjust linear speed as needed
-            angular_speed = 0.3 * (angle_to_goal - self.odom.pose.pose.orientation.z)  # Adjust angular speed as needed
-
-            self.twist.linear.x = linear_speed
-            self.twist.angular.z = angular_speed
-            self.vel_pub.publish(self.twist)
-            rospy.sleep(1)  # Adjust duration or use odometry feedback to control movement
-            # Here you might check for obstacle proximity using sensor data and update the velocities accordingly
+        self.get_user_input()  # 사용자 입력을 받는 함수 호출하여 목표 좌표 설정
 
     def get_user_input(self):
-        goal_x = float(input("Enter goal x-coordinate: "))
-        goal_y = float(input("Enter goal y-coordinate: "))
-        goal = PoseStamped()
-        goal.pose.position.x = goal_x
-        goal.pose.position.y = goal_y
-        return goal
+        while True:
+            try:
+                x = float(input("목표 x 좌표를 입력하세요: "))
+                y = float(input("목표 y 좌표를 입력하세요: "))
+                # 사용자 입력으로 받은 값을 목표 좌표로 설정
+                self.goal = (x, y)
+                break
+            except ValueError:
+                print("올바른 숫자를 입력하세요.")
 
-    def main(self):
-        rospy.init_node('a_star_planner')
-        rate = rospy.Rate(10)  # Hz
+    def heuristic(self, a, b):
+        # 휴리스틱 함수 (Manhattan 거리)
+        return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+    def is_collision(self, point):
+        # 주어진 좌표가 장애물과 충돌하는지 확인
+        for obstacle in self.obstacles:
+            if obstacle[0][0] <= point[0] <= obstacle[1][0] and obstacle[0][1] <= point[1] <= obstacle[1][1]:
+                return True
+        return False
+
+    def get_neighbors(self, node):
+        # 주어진 노드의 이웃 노드 반환
+        x, y = node
+        neighbors = [(x+1, y), (x-1, y), (x, y+1), (x, y-1)]
+        return [(i, j) for i, j in neighbors if 0 <= i < self.map_width and 0 <= j < self.map_height and not self.is_collision((i, j))]
+
+    def a_star(self):
+        open_set = []
+        heappush(open_set, (0, self.start))
+        came_from = {}
+        cost_so_far = {self.start: 0}
+
+        while open_set:
+            current = heappop(open_set)[1]
+
+            if current == self.goal:
+                path = []
+                while current in came_from:
+                    path.append(current)
+                    current = came_from[current]
+                path.append(self.start)
+                path.reverse()
+
+                # 경로를 이동 명령으로 변환하여 발행
+                for position in path:
+                    pose = PoseStamped()
+                    pose.pose.position.x = position[0] * self.resolution
+                    pose.pose.position.y = position[1] * self.resolution
+                    self.goal_pub.publish(pose)
+                    rospy.sleep(1)  # 로봇 속도 및 경로 이동 간격에 따라 조절
+                break
+
+            for neighbor in self.get_neighbors(current):
+                new_cost = cost_so_far[current] + 1  # 이동 비용은 일정하다고 가정 (맵이 이진으로 표현되어 있음)
+
+                if neighbor not in cost_so_far or new_cost < cost_so_far[neighbor]:
+                    cost_so_far[neighbor] = new_cost
+                    priority = new_cost + self.heuristic(self.goal, neighbor)
+                    heappush(open_set, (priority, neighbor))
+                    came_from[neighbor] = current
+
+                    # Odometry 정보 생성 및 발행
+                    odom = Odometry()
+                    odom.pose.pose.position.x = neighbor[0] * self.resolution
+                    odom.pose.pose.position.y = neighbor[1] * self.resolution
+                    rospy.loginfo("Odometry: x=%f, y=%f", odom.pose.pose.position.x, odom.pose.pose.position.y)
+                    self.odom_pub.publish(odom)
+
+    def run(self):
+        rospy.loginfo("A* planner started.")
+        rate = rospy.Rate(10)
+
         while not rospy.is_shutdown():
-            user_goal = self.get_user_input()  # Get user input for goal coordinates
-            self.move_to_goal(user_goal)
+            self.a_star()
             rate.sleep()
 
 if __name__ == '__main__':
     planner = AStarPlanner()
-    planner.main()
+    planner.run()

@@ -1,97 +1,92 @@
-import rospy
-from nav_msgs.msg import OccupancyGrid
-from nav_msgs.srv import SetMap
-from std_msgs.msg import Header
+import cv2
 import numpy as np
+import yaml
+import os
 import pymysql
+import time
 
-class MapUploader:
-    def __init__(self):
-        rospy.init_node('map_upload_node', anonymous=True)
+class MapGenerator:
+    def __init__(self, host, user, password, database):
+        self.host = host
+        self.user = user
+        self.password = password
+        self.database = database
+        self.obstacles_data = []
 
-    def fetch_obstacles_from_db(self):
-        # Connect to the database
-        db = pymysql.connect(host='192.168.1.155',
-                             user='turtlebot',
-                             password='0000',
-                             database='custom')
+    def fetch_obstacle_data(self):
+        connection = pymysql.connect(
+            host=self.host,
+            user=self.user,
+            password=self.password,
+            database=self.database,
+            cursorclass=pymysql.cursors.DictCursor
+        )
 
-        cursor = db.cursor()
-
-        # Example query to fetch obstacle information from the database
-        query = "SELECT x, y, w, h FROM ue"
-
-        cursor.execute(query)
-
-        obstacles = cursor.fetchall()
-
-        db.close()
-
-        return obstacles
-
-    def create_map_with_obstacles(self, obstacles, map_size_mm=1500, resolution=0.05):
-        # Calculate map size in pixels
-        map_size_px = int(map_size_mm / resolution)
-
-        # Create a numpy array to represent the map
-        self.occupancy_grid = np.zeros((map_size_px, map_size_px), dtype=np.uint8)
-
-        # Add obstacles to the map
-        for obstacle in obstacles:
-            # Extract obstacle parameters
-            x, y, width, height = obstacle
-
-            # Convert obstacle coordinates and size from mm to pixels
-            x_px = int(x / resolution)
-            y_px = int(y / resolution)
-            width_px = int(width / resolution)
-            height_px = int(height / resolution)
-
-            # Place the obstacle in the map
-            self.occupancy_grid[
-                max(0, y_px - height_px // 2): min(map_size_px, y_px + height_px // 2),
-                max(0, x_px - width_px // 2): min(map_size_px, x_px + width_px // 2)
-            ] = 100  # Setting obstacle value to 100 (could be any value representing an obstacle)
-
-        return self.occupancy_grid
-
-    def upload_map_to_map_server(self):
-        rospy.wait_for_service('/dynamic_map')  # Waiting for the map service to become available
         try:
-            set_map = rospy.ServiceProxy('/dynamic_map', SetMap)
-            map_msg = OccupancyGrid()
-            map_msg.header = Header()
-            map_msg.header.stamp = rospy.Time.now()
-            map_msg.header.frame_id = "map"
+            with connection.cursor() as cursor:
+                sql = "SELECT x_cm, y_cm, w, h FROM ue"
+                cursor.execute(sql)
+                self.obstacles_data = cursor.fetchall()
+        finally:
+            connection.close()
 
-            map_msg.info.width = self.occupancy_grid.shape[1]
-            map_msg.info.height = self.occupancy_grid.shape[0]
-            map_msg.info.resolution = 0.05  # Change this to your desired resolution
-            map_msg.info.origin.position.x = 0.0
-            map_msg.info.origin.position.y = 0.0
-            map_msg.info.origin.position.z = 0.0
-            map_msg.info.origin.orientation.x = 0.0
-            map_msg.info.origin.orientation.y = 0.0
-            map_msg.info.origin.orientation.z = 0.0
-            map_msg.info.origin.orientation.w = 1.0
+    def generate_map(self):
+        width_meters = 1.5
+        height_meters = 1.5
+        resolution_mm = 1
+        resolution_m = resolution_mm / 1000
+        resolution_px = int(width_meters / resolution_m)
 
-            map_msg.data = np.reshape(self.occupancy_grid.flatten(order='C'),
-                                      (map_msg.info.width * map_msg.info.height)).tolist()
+        map_img = np.zeros((resolution_px, resolution_px), dtype=np.uint8)
 
-            response = set_map(map_msg)
-            rospy.loginfo("Map uploaded to Map Server successfully!")
-        except rospy.ServiceException as e:
-            rospy.logerr("Failed to upload map: %s" % e)
+        obstacles = []
+        for obstacle in self.obstacles_data:
+            obstacles.append({
+                "x": obstacle["x_cm"],
+                "y": obstacle["y_cm"],
+                "width": obstacle["w"],
+                "height": obstacle["h"]
+            })
 
-if __name__ == '__main__':
-    map_uploader = MapUploader()
+        for obstacle in obstacles:
+            x_px = int(obstacle["x"] / width_meters * resolution_px)
+            y_px = int(obstacle["y"] / height_meters * resolution_px)
+            width_px = int(obstacle["width"] / width_meters * resolution_px)
+            height_px = int(obstacle["height"] / height_meters * resolution_px)
 
-    # Fetch obstacles from the database
-    obstacles_info = map_uploader.fetch_obstacles_from_db()
+            cv2.rectangle(
+                map_img,
+                (x_px - width_px // 2, y_px - height_px // 2),
+                (x_px + width_px // 2, y_px + height_px // 2),
+                255,
+                thickness=-1,
+            )
 
-    # Create the map with obstacles
-    obstacles_list = list(obstacles_info)
-    map_uploader.create_map_with_obstacles(obstacles_list)
+        map_file_path = os.path.expanduser("~/catkin_ws/src/turtlebot3/turtlebot3_astar/maps")
+        map_pgm_path = os.path.join(map_file_path, "map.pgm")
+        cv2.imwrite(map_pgm_path, map_img)
 
-    # Upload the map to Map Server
-    map_uploader.upload_map_to_map_server()
+        metadata = {
+            "image": "map.pgm",
+            "resolution": 0.0001,
+            "origin": [0.0, 0.0, 0.0],
+            "negate": 0,
+            "occupied_thresh": 0.65,
+            "free_thresh": 0.196,
+        }
+
+        map_yaml_path = os.path.join(map_file_path, "map.yaml")
+        with open(map_yaml_path, "w") as yaml_file:
+            yaml.dump(metadata, yaml_file, default_flow_style=False)
+
+        print(f"맵 및 YAML 파일이 {map_file_path}에 생성되었습니다.")
+
+    def continuous_map_generation(self):
+        while True:
+            self.fetch_obstacle_data()
+            self.generate_map()
+            time.sleep(10)
+
+# Usage example
+map_generator = MapGenerator('192.168.1.155', 'turtlebot', '0000', 'custom')
+map_generator.continuous_map_generation()  # Generates maps continuously with a default interval of 60 seconds
